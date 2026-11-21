@@ -1,0 +1,5 @@
+models/
+dl.log
+dl.err
+results/vram-*.csv
+__pycache__/

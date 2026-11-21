@@ -1,0 +1,10 @@
+.dockerignore
+models/
+results/
+*.log
+*.err
+*.csv
+*.html
+*.md
+*.sh
+*.yml

@@ -1,0 +1,114 @@
+# llama.cpp server for unsloth/Inkling-2-Mini-GGUF UD-Q4_K_XL (looped-transformer MoE 26.2B / 5.4B active)
+# Reproduces the benchmarked stack from docs/BENCHMARKS.md on 2 GPUs with 16 GB each.
+#
+# IMPORTANT (as of 2026-11-21):
+#   - The stock image `ghcr.io/ggml-org/llama.cpp:server-cuda` loads the Mainline_Support GGUFs, but
+#     WITHOUT fix PR #32704 the output is WRONG (loop passes 2/3 lose their per-expert NVFP4 scales
+#     → perplexity ~130 instead of 7.65). This compose builds the patched image from docker/Dockerfile.
+#     Once #32704 is merged, you can switch `image:` back to the stock image and drop `build:`.
+#   - SPLIT_MODE=tensor is NOT implemented for arch `inkling2_loop` → layer-split is mandatory.
+#   - Layer-split needs the auto-fit path: NEVER set LLAMA_ARG_TENSOR_SPLIT or LLAMA_ARG_N_GPU_LAYERS
+#     (either aborts the fit → the loader tries to put the whole 16 GB model on CUDA0 → OOM).
+#   - The MoE compute buffer scales with ctx: ub 512 only fits up to ~64k ctx; 131k needs ub 256,
+#     262k needs ub 128.
+#
+# Model card: https://huggingface.co/unsloth/Inkling-2-Mini-GGUF (Mainline_Support folder!)
+# Run guide:   https://unsloth.ai/docs/models/inkling-2-mini
+# Radar:       https://open-llm-radar.com/models/inkling-2-mini
+#
+# Usage:
+#   bash scripts/download-models.sh                 # -> ./models/ (~18.3 GB)
+#   docker compose up -d --build                    # build + start on port 8091
+#   docker compose logs -f
+#   API:   http://localhost:8091/v1/chat/completions
+#   WebUI: http://localhost:8091
+
+services:
+  llama-server-inkling2:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: llamacpp-inkling2:server-cuda
+    container_name: inkling2-llama-server
+    restart: unless-stopped
+    ipc: host
+    shm_size: 2g
+    # Default: any 2 GPUs. To pin specific GPUs, replace with your UUIDs from `nvidia-smi -L`, e.g.:
+    #   device_ids: ["GPU-<uuid1>", "GPU-<uuid2>"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    ports:
+      - "8091:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      # ============ Model ============
+      LLAMA_ARG_MODEL: /models/Inkling-2-Mini-UD-Q4_K_XL.gguf
+      LLAMA_ARG_ALIAS: inkling-2-mini
+
+      # ============ Context ============
+      LLAMA_ARG_CTX_SIZE: "131072"
+      LLAMA_ARG_FLASH_ATTN: "on"
+      LLAMA_ARG_CACHE_TYPE_K: "q8_0"
+      LLAMA_ARG_CACHE_TYPE_V: "q8_0"
+
+      # ============ Parallelism ============
+      LLAMA_ARG_N_PARALLEL: "1"            # single user; see variants below
+
+      # ============ GPU / CPU ============
+      # NEVER set LLAMA_ARG_N_GPU_LAYERS ("all" = -2) or LLAMA_ARG_TENSOR_SPLIT:
+      # either aborts the auto-fit → monolithic CUDA0 allocation → OOM (see BENCHMARKS.md, pitfall 2/5).
+      LLAMA_ARG_SPLIT_MODE: "layer"        # tensor not implemented for inkling2_loop
+      LLAMA_ARG_THREADS: "12"             # adjust to your CPU
+      LLAMA_ARG_THREADS_BATCH: "12"
+      LLAMA_ARG_UBATCH: "256"              # ub512 + ctx131k = compute-buffer OOM (MoE buffer scales with ctx)
+
+      # ============ Server ============
+      LLAMA_ARG_HOST: 0.0.0.0
+      LLAMA_ARG_PORT: "8080"
+      LLAMA_ARG_ENDPOINT_METRICS: "1"      # http://localhost:8091/metrics (Prometheus)
+      LLAMA_ARG_JINJA: "1"                 # chat template is embedded in the GGUF → --jinja required
+      LLAMA_ARG_UI_MCP_PROXY: "1"
+      LLAMA_ARG_ALLOW_UNAUTHENTICATED_TOOLS: "1"   # trusted-LAN posture; use an API key otherwise
+
+      # ============ Sampling defaults (vendor recommendation: NO truncation) ============
+      LLAMA_ARG_TEMPERATURE: "1.0"
+      LLAMA_ARG_TOP_P: "1.0"
+      LLAMA_ARG_TOP_K: "0"
+      LLAMA_ARG_MIN_P: "0.0"
+
+      # ============ Vision (optional; mmproj-F16.gguf from scripts/download-models.sh) ============
+      # LLAMA_ARG_MMPROJ: /models/mmproj-F16.gguf
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+# ---------------------------------------------------------------------
+# VARIANT — max context at full speed (validated, see docs/BENCHMARKS.md):
+#   LLAMA_ARG_CTX_SIZE: "262144" + LLAMA_ARG_CACHE_TYPE_K/V: "q4_0" + LLAMA_ARG_UBATCH: "128"
+#   → VRAM 13.3/14.6 GiB (comfortable split), tg ~24.7 t/s
+#   ctx 393216 @ q4_0/ub128 still runs (tight split, tg ~17.6); 524288 does not fit.
+#
+# VARIANT — 2 users: LLAMA_ARG_N_PARALLEL: "2" → 2 slots × 65536 (per-slot KV, no unified pool)
+# VARIANT — 4 users: LLAMA_ARG_N_PARALLEL: "4" → 4 slots × 32768; prompts >32.7k per slot are rejected
+#
+# DSpark speculative decoding (0.4 GB drafter) is NOT supported by mainline yet
+# (https://github.com/ggml-org/llama.cpp/pull/32218) — it requires unsloth's prebuilt
+# b12588-mix-c0c3de8 plus the ROOT layout GGUFs (not Mainline_Support), so it is out of
+# scope for this stack.
+#
+# Troubleshooting:
+#   - tg collapsed → check VRAM counters: a tight auto-fit split (~14.8+ GiB on both GPUs)
+#     means VMM overflow (~17 t/s). Lower ctx or switch KV to q4_0.
+#   - "cudaMalloc failed: out of memory" at startup → lower ctx, lower ubatch, or KV q4_0.
+#   - Unknown LLAMA_ARG_* names are silently ignored → verify the startup params in the log.
+# ---------------------------------------------------------------------

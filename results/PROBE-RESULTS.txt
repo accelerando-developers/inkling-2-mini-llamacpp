@@ -1,0 +1,8 @@
+ctx=65536   kv=q8_0  ub=512 ✅ OK             pp=558    tg=26.0   KV=?                    VRAM=13269/14871 MiB start=8s
+ctx=98304   kv=q8_0  ub=512 ✅ OK             pp=569    tg=17.3   KV=?                    VRAM=14777/14663 MiB start=8s
+ctx=131072  kv=q8_0  ub=256 ✅ OK             pp=453    tg=24.7   KV=?                    VRAM=13323/14569 MiB start=8s
+ctx=163840  kv=q8_0  ub=256 ✅ OK             pp=562    tg=18.5   KV=?                    VRAM=14793/14591 MiB start=8s
+ctx=196608  kv=q8_0  ub=256 ✅ OK             pp=424    tg=16.7   KV=?                    VRAM=14899/14865 MiB start=8s
+ctx=262144  kv=q4_0  ub=128 ✅ OK             pp=314    tg=24.7   KV=?                    VRAM=13305/14571 MiB start=8s
+ctx=393216  kv=q4_0  ub=128 ✅ OK             pp=306    tg=17.6   KV=?                    VRAM=14843/14807 MiB start=10s
+ctx=524288  kv=q4_0  ub<=128 ❌ FAIL(start/health) start=22s
