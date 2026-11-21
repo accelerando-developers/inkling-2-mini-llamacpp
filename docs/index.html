@@ -568,5 +568,32 @@ physical blocks 3× — VRAM saved, yes, but read and compute time still ×3).<b
 MODELS.forEach(m=>{ updateKV(m); });
 renderStatics();
 </script>
+
+<div class="card" id="further-links">
+  <h2 style="margin-top:0">Further links &amp; references</h2>
+  <div class="callout" style="line-height:2">
+    <b>Models — Open LLM Radar:</b>
+    <a style="color:var(--accent)" href="https://open-llm-radar.com/models/inkling-2-mini">Inkling 2 Mini</a> ·
+    <a style="color:var(--accent)" href="https://open-llm-radar.com/models/qwen38-27b">Qwen3.8-27B</a> ·
+    <a style="color:var(--accent)" href="https://open-llm-radar.com/models/maxwell-v10-flash">Maxwell-V1.0-Flash</a><br>
+    <b>Inkling 2 Mini:</b>
+    <a style="color:var(--accent)" href="https://huggingface.co/thinkingmachines/Inkling-2-Mini">model card (Thinking Machines Lab)</a> ·
+    <a style="color:var(--accent)" href="https://huggingface.co/unsloth/Inkling-2-Mini-GGUF">unsloth GGUF repo</a> ·
+    <a style="color:var(--accent)" href="https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/blob/main/Mainline_Support/README.md">Mainline_Support README</a> ·
+    <a style="color:var(--accent)" href="https://unsloth.ai/docs/models/inkling-2-mini">unsloth run guide</a><br>
+    <b>Baselines:</b>
+    <a style="color:var(--accent)" href="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF">Qwen3.8-27B GGUF</a> ·
+    <a style="color:var(--accent)" href="https://huggingface.co/AtomicChat/Maxwell-V1-Flash-GGUF">Maxwell-V1-Flash GGUF</a> ·
+    <a style="color:var(--accent)" href="https://huggingface.co/maxwell-model/Maxwell-V1-Flash">Maxwell model card</a><br>
+    <b>llama.cpp PRs:</b>
+    <a style="color:var(--accent)" href="https://github.com/ggml-org/llama.cpp/pull/32694">#32694 inkling2_loop layout</a> ·
+    <a style="color:var(--accent)" href="https://github.com/ggml-org/llama.cpp/pull/32704">#32704 scale-reshare fix</a> ·
+    <a style="color:var(--accent)" href="https://github.com/ggml-org/llama.cpp/pull/32218">#32218 DSpark support</a><br>
+    <b>This project:</b>
+    <a style="color:var(--accent)" href="https://github.com/accelerando-developers/inkling-2-mini-llamacpp">GitHub repo</a> ·
+    <a style="color:var(--accent)" href="https://github.com/accelerando-developers/inkling-2-mini-llamacpp/blob/main/docs/BENCHMARKS.md">full benchmark report</a> ·
+    <a style="color:var(--accent)" href="https://github.com/accelerando-developers/inkling-2-mini-llamacpp/blob/main/docker-compose.yml">docker-compose.yml</a>
+  </div>
+</div>
 </body>
 </html>
