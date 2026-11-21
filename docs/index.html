@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Animated, step-by-step data-flow comparison of decoding on 2x RTX 5060 Ti: dense Qwen3.8-27B vs MoE Maxwell-V1-Flash vs looped-MoE Inkling 2 Mini (llama.cpp). Shows when bytes flow where: weights, KV cache, expert routing, loop passes - based on real benchmarks.">
+<meta name="keywords" content="Inkling 2 Mini, llama.cpp, looped transformer, MoE, NVFP4, benchmark, RTX 5060 Ti, Qwen3.8, Maxwell-V1-Flash, KV cache, speculative decoding">
+<meta property="og:title" content="Data-Flow Atlas: dense vs MoE vs looped-MoE inference (llama.cpp)">
+<meta property="og:description" content="Where do the bytes come from, and when do they flow where? Animated decode-tick comparison of Qwen3.8-27B, Maxwell-V1-Flash and Inkling 2 Mini, based on real measurements.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://accelerando-developers.github.io/inkling-2-mini-llamacpp/">
+<link rel="canonical" href="https://accelerando-developers.github.io/inkling-2-mini-llamacpp/">
 <title>Data-Flow Atlas: Inference of Qwen3.8-27B vs Maxwell-V1-Flash vs Inkling-2-Mini</title>
 <style>
   :root{

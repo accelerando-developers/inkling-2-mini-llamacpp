@@ -5,6 +5,8 @@ Standalone, reproducible setup for running [Thinking Machines Lab](https://think
 max-context ladder, pp/tg depth scans, parallel-request tests up to 64k combined context, and an
 **interactive animated data-flow visualization** comparing three architectures.
 
+**🌐 Live demo:** <https://accelerando-developers.github.io/inkling-2-mini-llamacpp/>
+
 > Tested 2026-11-21 · llama.cpp @ `2a28df0f` (inkling2_loop layout **#32694** + scale-reshare fix **#32704**)
 
 ## The three models (all tracked on [Open LLM Radar](https://open-llm-radar.com))
