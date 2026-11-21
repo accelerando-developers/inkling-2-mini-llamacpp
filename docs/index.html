@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data-Flow Atlas: Inference of Qwen3.8-27B vs Maxwell-V1-Flash vs Inkling-2-Mini</title>
+<style>
+  :root{
+    --bg:#0b0f14; --card:#121a23; --card2:#0e151d; --line:#22303e; --txt:#dbe7f3; --dim:#8aa0b6;
+    --accent:#4cc2ff; --qwen:#ff9db0; --maxwell:#7ee787; --inkling:#c792ea;
+    --w:#ff8a8a; --kv:#ffd166; --over:#a6b6c6; --ok:#59d97b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;padding:22px}
+  h1{font-size:22px;margin:0 0 4px}
+  h2{font-size:17px;margin:26px 0 10px;color:var(--accent)}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:12px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+  @media (max-width:1180px){.grid3{grid-template-columns:1fr}}
+  .lane{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;position:relative}
+  .lane h3{margin:0;font-size:15px}
+  .lane .arch{color:var(--dim);font-size:12px;margin:2px 0 6px}
+  .hdr-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+  .phases{display:flex;height:14px;border-radius:5px;overflow:hidden;border:1px solid var(--line);margin-top:8px;background:#0a1017}
+  .phases div{transition:width .1s linear}
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--dim);margin-top:5px}
+  .lg{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+  .stats{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+  .stat{background:#0a1017;border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:12px;color:var(--dim)}
+  .stat b{color:var(--txt);font-size:13px}
+  .ctrls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+  button{background:#16232f;color:var(--txt);border:1px solid #2c3f52;border-radius:8px;padding:8px 14px;font-size:14px;cursor:pointer}
+  button:hover{background:#1d3140}
+  button.on{border-color:var(--accent);box-shadow:0 0 6px #4cc2ff44}
+  select,input[type=range]{background:#0a1017;color:var(--txt);border:1px solid #2c3f52;border-radius:8px;padding:6px 8px}
+  input[type=range]{accent-color:var(--accent);min-width:180px}
+  .note{font-size:12px;color:var(--dim)}
+  svg text{font-family:system-ui,sans-serif}
+  svg .mono{font-family:ui-monospace,monospace}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  th,td{border:1px solid var(--line);padding:5px 9px;text-align:right}
+  th{background:#0a1017;color:var(--dim);font-weight:600}
+  td:first-child,th:first-child{text-align:left}
+  .callout{border-left:3px solid var(--accent);padding:6px 10px;margin:8px 0;font-size:13px}
+  .callout.warn{border-left-color:var(--kv)}
+  .callout.bad{border-left-color:var(--w)}
+  .callout.good{border-left-color:var(--ok)}
+</style>
+</head>
+<body>
+<div class="card" style="display:flex;gap:18px;flex-wrap:wrap;align-items:center">
+  <b style="color:var(--accent)">GitHub Pages live demo</b>
+  <span class="note">Repo:</span> <a style="color:var(--accent)" href="https://github.com/accelerando-developers/inkling-2-mini-llamacpp">accelerando-developers/inkling-2-mini-llamacpp</a>
+  <span class="note">Full benchmark report:</span> <a style="color:var(--accent)" href="https://github.com/accelerando-developers/inkling-2-mini-llamacpp/blob/main/docs/BENCHMARKS.md">docs/BENCHMARKS.md</a>
+  <span class="note">Model links:</span>
+  <a style="color:var(--accent)" href="https://open-llm-radar.com/models/inkling-2-mini">Inkling 2 Mini</a> ·
+  <a style="color:var(--accent)" href="https://open-llm-radar.com/models/qwen38-27b">Qwen3.8-27B</a> ·
+  <a style="color:var(--accent)" href="https://open-llm-radar.com/models/maxwell-v10-flash">Maxwell-V1.0-Flash</a>
+  <span class="note">(open-llm-radar.com)</span>
+</div>
+<h1>Data-Flow Atlas — where do the bytes come from, and when do they flow where?</h1>
+<div class="sub">One decode tick (1 token) through three architectures on the same machine (2× RTX 5060 Ti).
+&nbsp;Packets = real reads: <span class="lg" style="background:var(--w)"></span>weights from VRAM
+<span class="lg" style="background:var(--maxwell)"></span>active experts
+<span class="lg" style="background:var(--inkling)"></span>loop layers pass 1
+<span class="lg" style="background:var(--over)"></span>loop layers reused (passes 2/3)
+<span class="lg" style="background:var(--kv)"></span>KV cache. Packet size ≈ bytes read.
+&nbsp;Measurement basis: the RESULTS.md files of the three projects.</div>
+
+<div class="card">
+  <div class="ctrls">
+    <button id="btnPlay">▶ Play</button>
+    <button id="btnStep">⏭ Single step (layer application)</button>
+    <button id="btnToken">⚡ Run to token end</button>
+    <button id="btnReset">⟲ Reset</button>
+    <span style="min-width:20px"></span>
+    <label class="note">KV depth:</label>
+    <input id="depth" type="range" min="0" max="6" value="0">
+    <b id="depthVal" style="font-size:13px">0 (empty)</b>
+    <span style="min-width:20px"></span>
+    <label class="note">Speed:</label>
+    <select id="speed">
+      <option value="0.25">0.25×</option>
+      <option value="1" selected>1× (realtime)</option>
+      <option value="4">4×</option>
+      <option value="16">16×</option>
+    </select>
+    <button id="btnMtp" title="Qwen3.8 only: draft-mtp n_max=6, measured ×2.2">MTP n6 (Qwen): off</button>
+  </div>
+</div>
+
+<div class="grid3" id="lanes"></div>
+
+<h2>Where does the time go? (decode tick, current setting)</h2>
+<div id="lossbars"></div>
+
+<h2>How big is a step — decoding 1 token (ms/token → t/s)</h2>
+<div class="grid3" id="tokcards"></div>
+
+<h2>Measured ladder at this depth</h2>
+<div class="card" id="tablecard"></div>
+
+<div class="card">
+  <h2 style="margin-top:0">The three data-flow stories</h2>
+  <div class="callout bad"><b>Qwen3.8-27B (dense):</b> There is exactly ONE source: the ENTIRE weight set (~16.3 GiB) has to pass through the compute unit once per token. 64 layer applications, each reads its full weight slice (red packets). No router, no sleeping weights, no reuse — a pure bandwidth marathon. MTP n6: one pass serves ~2.2 tokens (the packet is effectively shared).</div>
+  <div class="callout good"><b>Maxwell-V1-Flash (MoE 35B/3B-A):</b> Per application the router wakes only 12 of 256 experts + 1 shared — ~90 % of the weights SLEEP (dark tiles, no packets!). The green packets are tiny, hence 113.8 t/s. BUT: the yellow KV packets grow with depth (49 KB/token × depth, dense attention) — from ~16k they overtake the weight packets and throttle the token.</div>
+  <div class="callout bad"><b>Inkling-2-Mini (loop-MoE 26B/5.4B-A):</b> Only 24 physical layers, but the middle 12 run THREE TIMES with the same weights (loop zone, ×3). Pass 1 reads fresh (purple packets), passes 2/3 read the SAME blocks AGAIN (gray packets — same bytes, compute time again!). Per application: 8 of 128 experts + NVFP4 dequant + top-8 routing. The packets are small, but there are 48 applications in series: overhead eats ~80 % of the time.</div>
+  <div class="callout"><b>Prefill (pp) analogously:</b> dense Qwen = one large GEMM per layer (1806 t/s); Maxwell feeds small expert GEMMs (up to 3402 t/s); Inkling has to traverse the loop zone 3× per ubatch + NVFP4 → only 190–475 t/s.</div>
+</div>
+
+<h2>Measurement basis &amp; model assumptions of the phase bars</h2>
+<div class="card note" id="method"></div>
+
+<script>
+// ==================== Measurements (RESULTS.md of all three projects) ====================
+const BW = 0.378;            // TB/s: kalibriert aus Qwen tg-d0 (16.34 GiB / 44.3 ms)
+const DEPTHS = [0,8192,16384,32768,65536,98304,131072];
+const MTP_FACTOR = 2.2;      // Qwen draft-mtp n_max=6, gemessen (qwen38 §8/§11)
+
+const MODELS = [
+ {
+  id:'qwen', color:'#ff9db0', name:'Qwen3.8-27B', arch:'dense · 64 layers · one pass · ALL 27B parameters read per token',
+  nPhys:64, weightGiB:16.34, bytesPerStepMB: 16.34*1024/64,      // ~262 MB je Layer
+  op:'dense GEMM', srcLabel:'weights L{n}/64 → compute',
+  tg:[[0,22.59],[8192,21.76],[32768,19.36],[65536,17.08],[120000,15.9]],
+  pp:[[0,1673],[8192,1541],[32768,1205],[65536,938],[120000,900]],
+  weightMs: 42.0,
+  note:'~95 % of the time = weight reads (bandwidth). MTP toggle: one pass serves a measured ~2.2 tokens → ms/token ÷2.2.'
+ },
+ {
+  id:'maxwell', color:'#7ee787', name:'Maxwell-V1-Flash', arch:'MoE 35B/3B-A · 45 applications · router wakes 12+1 of 256 experts',
+  nPhys:45, weightGiB:21.32, bytesPerStepMB: 2.4*1024/45,        // aktive Bytes je Anwendung
+  op:'MoE GEMM 12+1/256', srcLabel:'12 active experts L{n}/45 → compute',
+  tg:[[0,113.8],[8192,92.3],[16384,78.1],[32768,60.2],[65536,40.9],[131072,25.2]],
+  pp:[[0,3402],[8192,2747],[16384,2322],[32768,1821],[65536,1257],[131072,776]],
+  weightMs: 6.4,
+  note:'~90 % of the weights sleep per token. From ~16k depth the yellow KV packet grows (49 KB/token, dense attention) and becomes the brake.'
+ },
+ {
+  id:'inkling', color:'#c792ea', name:'Inkling-2-Mini', arch:'loop-MoE 26B · 24 physical layers, middle 12 run ×3 → 48 applications · top-8/128',
+  nPhys:24, weightGiB:17.63, bytesPerStepMB: 3.1*1024/48,
+  op:'Loop GEMM 8/128', srcLabel:'pass {p} · same weights → compute',
+  steps: [
+    ...Array.from({length:24}, (_,i)=>({chip:i, pass:1, reuse:false})),
+    ...Array.from({length:12}, (_,i)=>({chip:12+i, pass:2, reuse:true})),
+    ...Array.from({length:12}, (_,i)=>({chip:12+i, pass:3, reuse:true})),
+  ],
+  tg:[[0,23.0],[2624,22.5],[8192,23.0],[16384,22.0],[32768,23.0],[65536,20.2],[98304,19.7],[131072,17.2]],
+  pp:[[2624,475],[8192,459],[16384,419],[32768,360],[65536,280],[98304,225],[131072,190]],
+  weightMs: 8.3,
+  note:'The loop shares weights (VRAM saved), but passes 2/3 read the SAME bytes AGAIN and cost full compute time. tg flat at 22–23 t/s up to 64k: the limit = routing/NVFP4 dequant/kernels, not KV.'
+ }
+];
+
+// ==================== Helfer ====================
+function interp(curve, x){
+  if (x <= curve[0][0]) return curve[0][1];
+  for (let i=1;i<curve.length;i++){
+    if (x <= curve[i][0]){
+      const [x0,y0]=curve[i-1], [x1,y1]=curve[i];
+      return y0 + (y1-y0)*(x-x0)/(x1-x0);
+    }
+  }
+  return curve[curve.length-1][1];
+}
+function fmtD(d){ return d===0?'0 (empty)' : ((d/1024).toFixed(0)+'k'); }
+function fmtMs(v){ return v>=100? v.toFixed(0) : v>=10? v.toFixed(1) : v.toFixed(2); }
+
+// Phase model (ms/token): weights (fixed) + KV/attention (depth-dependent) + overhead (fixed)
+for (const m of MODELS){
+  m.msBaseAt = d => 1000/interp(m.tg, d);
+  m.overMs   = m.msBaseAt(0) - m.weightMs;
+  m.mtpOn    = false;
+  m.msTokAt  = d => m.msBaseAt(d) * (m.mtpOn ? 1/MTP_FACTOR : 1);
+  m.phasesAt = d => {
+    const f = m.mtpOn ? 1/MTP_FACTOR : 1;
+    const w = m.weightMs*f, over = m.overMs*f;
+    const kv = Math.max(0, m.msBaseAt(d)*f - w - over);
+    return {w, kv, over, total: w+kv+over};
+  };
+  m.steps = m.steps || Array.from({length:m.nPhys},(_,i)=>({chip:i, pass:1, reuse:false}));
+  m.stepCount = m.steps.length;
+}
+
+// ==================== SVG lane construction: network schema ====================
+const NS='http://www.w3.org/2000/svg';
+function el(tag, attrs, parent){ const e=document.createElementNS(NS,tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+function txt(x,y,s,attrs,parent){ const t=el('text',Object.assign({x,y,fill:'#8aa0b6','font-size':10},attrs||{}),parent); t.textContent=s; return t; }
+function arrow(x1,y1,x2,y2,color,parent,dash){
+  el('line',{x1,y1,x2,y2,stroke:color||'#2c3f52','stroke-width':1,'stroke-dasharray':dash||'3 4'},parent);
+  const ang=Math.atan2(y2-y1,x2-x1);
+  el('path',{d:`M ${x2} ${y2} L ${x2-6*Math.cos(ang-0.45)} ${y2-6*Math.sin(ang-0.45)} L ${x2-6*Math.cos(ang+0.45)} ${y2-6*Math.sin(ang+0.45)} Z`,fill:color||'#2c3f52'},parent);
+}
+
+const lanesEl=document.getElementById('lanes');
+MODELS.forEach(m=>{
+  const lane=document.createElement('div'); lane.className='lane';
+  lane.innerHTML=`<h3><span class="hdr-dot" style="background:${m.color}"></span>${m.name}</h3>
+    <div class="arch">${m.arch}</div>`;
+  const svg=el('svg',{viewBox:'0 0 460 402', width:'100%', style:'display:block'});
+  lane.appendChild(svg); lanesEl.appendChild(lane);
+
+  m.sv={svg, packets:[], segs:[], storeTiles:[], bankTiles:[]};
+  const gS=el('g',{},svg); m.sv.gS=gS;
+  m.sv.gP=el('g',{},svg);
+
+  m.sv.stat=txt(10,14,'ready …',{'font-size':11, id:'stat-'+m.id},svg);
+
+  // ---------- EINGANG ----------
+  el('rect',{x:150,y:20,width:160,height:24,rx:6,fill:'#101b26',stroke:'#4cc2ff','stroke-width':1.2},gS);
+  txt(230,36,'Token INPUT (embedding)',{'text-anchor':'middle',fill:'#dbe7f3','font-size':10.5},gS);
+  arrow(230,44,230,64,'#2c3f52',gS,'2 3');
+
+  // ---------- MINIMAP: Layer-Anwendungen ----------
+  txt(10,52,'Layer applications:',{'font-size':9,fill:'#5f7488'},gS);
+  const segW=440/m.stepCount;
+  for (let i=0;i<m.stepCount;i++){
+    const st=m.steps[i];
+    const fill = m.id==='qwen'? '#3a2228' : m.id==='maxwell'? '#17301f' : (st.reuse? '#2e3440':'#31264a');
+    m.sv.segs.push(el('rect',{x:10+i*segW, y:56, width:Math.max(segW-0.8,0.5), height:9, rx:1, fill},gS));
+  }
+  if (m.id==='inkling'){
+    [24,36].forEach(b=>el('line',{x1:10+b*segW,y1:54,x2:10+b*segW,y2:67,stroke:'#a6b6c6','stroke-width':1.2},gS));
+    txt(10+24*segW+2,52,'← pass 2 (same layers again!)',{'font-size':7,fill:'#a6b6c6'},gS);
+  }
+
+  // ---------- LINKS: KV-CACHE ----------
+  txt(8,80,'KV cache',{'font-size':9,fill:'#5f7488'},gS);
+  el('rect',{x:8,y:84,width:38,height:270,rx:4,fill:'#0a1017',stroke:'#2c3f52'},gS);
+  m.sv.kvFill=el('rect',{x:9,y:85,width:36,height:0,fill:'#8a6d1a'},gS);
+  m.sv.kvTxt=txt(27,372,'0 tok',{'font-size':8.5,'text-anchor':'middle'},gS);
+  arrow(48,106,150,106,'#6b5a1e',gS);
+
+  // ---------- CENTER: the layer application (magnified) ----------
+  el('rect',{x:150,y:84,width:180,height:44,rx:6,fill:'#101b26',stroke:'#4cc2ff','stroke-width':1.2},gS);
+  m.sv.attn=el('rect',{x:150,y:84,width:180,height:44,rx:6,fill:'none',stroke:'none'},gS);
+  txt(240,99,'① Attention'+(m.id==='inkling'?' (hybrid local+global)':' (GQA)'),{'text-anchor':'middle',fill:'#dbe7f3','font-size':11},gS);
+  m.sv.attnSub=txt(240,116,'reads K+V of all previous tokens · writes 1 token K/V',{'text-anchor':'middle','font-size':8.5},gS);
+  arrow(240,128,240,148,'#2c3f52',gS,'2 3');
+  if (m.id==='qwen'){
+    txt(240,167,'② dense FFN — no router, everything read',{'text-anchor':'middle',fill:'#dbe7f3','font-size':10},gS);
+    el('rect',{x:150,y:148,width:180,height:30,rx:6,fill:'#0e1520',stroke:'#5a333c','stroke-width':1.2},gS);
+    txt(240,167,'② dense FFN — no router!',{'text-anchor':'middle',fill:'#dbe7f3','font-size':10},gS);
+  } else {
+    m.sv.router=el('rect',{x:150,y:148,width:180,height:30,rx:6,fill:'#0e1520',stroke:m.color,'stroke-width':1.2,'stroke-dasharray':'4 3'},gS);
+    txt(240,160,'② Router — selects experts',{'text-anchor':'middle',fill:'#dbe7f3','font-size':10},gS);
+    txt(240,172,m.id==='maxwell'?'top-12 of 256 + 1 shared':'top-8 of 128 · NVFP4 scales',{'text-anchor':'middle','font-size':8.5},gS);
+  }
+  arrow(240,178,240,198,'#2c3f52',gS,'2 3');
+  el('rect',{x:150,y:198,width:180,height:40,rx:6,fill:'#101b26',stroke:'#4cc2ff','stroke-width':1.2},gS);
+  m.sv.ffn=el('rect',{x:150,y:198,width:180,height:40,rx:6,fill:'none',stroke:'none'},gS);
+  txt(240,216,'③ '+({qwen:'FFN GEMM (full layer slice)',maxwell:'MoE GEMM (active experts only)',inkling:'Loop GEMM (8/128 + NVFP4)'})[m.id],{'text-anchor':'middle',fill:'#dbe7f3','font-size':10.5},gS);
+  txt(240,230,'reads weights from the right →',{'text-anchor':'middle','font-size':8.5},gS);
+  arrow(240,238,240,300,'#2c3f52',gS,'2 3');
+  txt(268,262,'state (residual stream)',{'font-size':8.5,fill:'#5f7488'},gS);
+  if (m.id==='inkling'){
+    el('path',{d:'M 236 296 C 96 320, 96 132, 236 150', fill:'none', stroke:'#a6b6c6','stroke-width':1.6,'stroke-dasharray':'7 5', opacity:.9},gS);
+    txt(104,215,'BACK-EDGE (loop ×3)',{'font-size':8,fill:'#a6b6c6',transform:'rotate(-90 104 215)','text-anchor':'middle','font-weight':'bold'},gS);
+  }
+  // ---------- AUSGANG ----------
+  el('rect',{x:150,y:302,width:180,height:24,rx:6,fill:'#101b26',stroke:'#59d97b','stroke-width':1.2},gS);
+  txt(240,318,'Output head → next token',{'text-anchor':'middle',fill:'#dbe7f3','font-size':10.5},gS);
+  arrow(240,326,240,346,'#2c3f52',gS,'2 3');
+  m.sv.tokTxt=txt(150,368,'…',{'font-size':11,fill:'#dbe7f3',class:'mono'},svg);
+  m.sv.byteTxt=txt(78,390,'',{'font-size':9,class:'mono'},svg);
+  txt(10,368,'Σ read (this token):',{'font-size':9,fill:'#5f7488'},svg);
+
+  // ---------- RECHTS: GEWICHTE-SPEICHER (je Architektur anders!) ----------
+  txt(452,80,'Weights (VRAM)',{'font-size':9,fill:'#5f7488','text-anchor':'end'},gS);
+  if (m.id==='qwen'){
+    for (let i=0;i<64;i++){ const c=i%8, r=(i/8)|0;
+      m.sv.storeTiles.push(el('rect',{x:406+c*5.6, y:86+r*5.6, width:4.6, height:4.6, rx:1, fill:'#3a2228', stroke:'#5a333c','stroke-width':.5},gS)); }
+    txt(452,140,'64 layer tiles — ALL of them get read',{'font-size':8,'text-anchor':'end'},gS);
+    txt(452,152,'16.34 GiB / token (bandwidth killer)',{'font-size':9,'text-anchor':'end',fill:'#ff9db0'},gS);
+  } else if (m.id==='maxwell'){
+    for (let i=0;i<256;i++){ const c=i%16, r=(i/16)|0;
+      m.sv.bankTiles.push(el('rect',{x:404+c*3.05, y:86+r*3.05, width:2.5, height:2.5, fill:'#14251a'},gS)); }
+    txt(452,142,'256-expert bank per application',{'font-size':8,'text-anchor':'end'},gS);
+    txt(452,154,'only 12+1 awake · ~2.4 GB / token',{'font-size':9,'text-anchor':'end',fill:'#7ee787'},gS);
+  } else {
+    for (let i=0;i<24;i++){ const c=i%12, r=(i/12)|0;
+      m.sv.storeTiles.push(el('rect',{x:406+c*3.9, y:86+r*23, width:3.4, height:21, rx:1, fill:'#31264a', stroke:'#3d2f5a','stroke-width':.5},gS)); }
+    el('rect',{x:429.4, y:84, width:26, height:49, rx:3, fill:'none', stroke:'#c792ea','stroke-width':1.2,'stroke-dasharray':'4 3'},gS);
+    txt(452,145,'24 layers — middle = LOOP ZONE (read ×3!)',{'font-size':8,'text-anchor':'end',fill:'#c792ea'},gS);
+    txt(452,157,'~3.1 GB/token, but ×3 compute time',{'font-size':9,'text-anchor':'end'},gS);
+  }
+});
+// ==================== Engine: sub-phases + packet flow ====================
+// Each layer application (step) splits temporally:
+//   0–30 %: ① attention (KV read/write) · 30–45 %: ② router (MoE)
+//   45–100 %: ③ weight GEMM (FFN/experts) · at the end: state → next application
+const WORDS=['The',' loop',' shares',' the',' weights',',',' saving',' VRAM',' —',' but',' the',' time',' burns',' in',' routing',' and',' NVFP4',' dequant','.'];
+const S = MODELS.map(m=>({m, i:0, rem:0, acc:{w:0,kv:0,over:0}, tokens:0, wordIdx:0, cooling:0, bytes:0, flags:{}}));
+let playing=false, depthVal=0, speed=1, lastT=0;
+const $ = id=>document.getElementById(id);
+
+function getPh(s){ const m=s.m, ph=m.phasesAt(depthVal), n=m.stepCount;
+  return {w:ph.w/n, kv:ph.kv/n, over:ph.over/n}; }
+
+function spawnPacket(m, pts, color, r, dur, delay){
+  const pk={pts, color, r, dur:Math.max(dur,1), t:-delay, el:null};
+  pk.el=el('circle',{r, fill:color, opacity:.95, cx:pts[0].x, cy:pts[0].y}, m.sv.gP);
+  m.sv.packets.push(pk); return pk;
+}
+function advancePackets(m, ms){
+  const keep=[];
+  for (const pk of m.sv.packets){
+    pk.t += ms;
+    if (pk.t<0){ keep.push(pk); continue; }
+    const f=Math.min(1, pk.t/pk.dur), ease=f*f*(3-2*f);
+    const segs=pk.pts.length-1, sf=ease*segs, si=Math.min(segs-1, sf|0), lf=sf-si;
+    const a=pk.pts[si], b=pk.pts[si+1];
+    pk.el.setAttribute('cx', a.x+(b.x-a.x)*lf);
+    pk.el.setAttribute('cy', a.y+(b.y-a.y)*lf);
+    if (f<1) keep.push(pk); else pk.el.remove();
+  }
+  m.sv.packets=keep;
+}
+function glow(node, col){ if(!node) return; node.setAttribute('stroke',col); node.setAttribute('stroke-width',2); }
+function dimNode(node, col){ if(!node) return; node.setAttribute('stroke',col||'#4cc2ff'); node.setAttribute('stroke-width',1.2); }
+
+function litStore(m, s){
+  const st=m.steps[Math.min(s.i,m.stepCount-1)];
+  const active = m.id==='qwen' ? '#ff8a8a' : m.id==='maxwell' ? '#7ee787' : (st.reuse? '#a6b6c6':'#c792ea');
+  if (m.id==='maxwell'){ // 12 active + 1 shared in the 256-expert bank (deterministic per application)
+    m.sv.bankTiles.forEach((t2,j)=>{
+      const on = j<12 ? ((s.i*7+j*13)%256)<256 && j<12 : j===12;
+      t2.setAttribute('fill', on? (j===12?'#3fa657':'#7ee787') : '#14251a');
+    });
+  } else {
+    m.sv.storeTiles.forEach((t2,j)=>{
+      t2.setAttribute('fill', j===st.chip? active : (m.id==='qwen'? '#3a2228' : '#31264a'));
+      t2.setAttribute('stroke', j===st.chip? active : (m.id==='qwen'? '#5a333c':'#3d2f5a'));
+    });
+  }
+  // Minimap-Cursor
+  m.sv.segs.forEach((sg,j)=>sg.setAttribute('stroke', j===s.i? '#dbe7f3':'none'));
+}
+function segsDone(m, upto){
+  for (let j=0;j<upto && j<m.sv.segs.length;j++){
+    const st=m.steps[j];
+    m.sv.segs[j].setAttribute('fill', m.id==='qwen'? '#5a333c' : m.id==='maxwell'? '#1e3a29' : (st.reuse? '#4a5568':'#4a3a6e'));
+  }
+}
+
+function subPhase(s){
+  // innerhalb des aktuellen Steps (s.rem 0..1) genau einmal pro Phase triggern
+  const m=s.m, st=m.steps[Math.min(s.i,m.stepCount-1)], ph=getPh(s), need=ph.w+ph.kv+ph.over;
+  const stepMs=need, F=s.flags;
+  if (!F.attn){ F.attn=1;
+    litStore(m,s);
+    glow(m.sv.attn, '#ffd166');
+    if (ph.kv>0.0005) spawnPacket(m, [{x:48,y:106},{x:150,y:106}], '#ffd166', Math.min(12,Math.max(3,Math.sqrt(ph.kv*10))), stepMs*0.3, 0);
+    spawnPacket(m, [{x:150,y:118},{x:48,y:118}], '#8a6d1e', 2, stepMs*0.25, 0); // KV-Schreibzugriff (1 Token)
+  }
+  if (s.rem>=0.30 && !F.route){ F.route=1;
+    if (m.sv.router) glow(m.sv.router, m.color);
+    if (m.id==='maxwell') litStore(m,s); // Expertenauswahl sichtbar
+  }
+  if (s.rem>=0.45 && !F.ffn){ F.ffn=1;
+    const col = m.id==='qwen'? '#ff8a8a' : m.id==='maxwell'? '#7ee787' : (st.reuse? '#a6b6c6':'#c792ea');
+    const srcY = m.id==='maxwell'? 109 : 100;
+    spawnPacket(m, [{x:402,y:srcY},{x:330,y:218}], col, Math.min(13,Math.max(4,Math.sqrt(m.bytesPerStepMB)*0.6)), stepMs*0.55, 0);
+    glow(m.sv.ffn, col);
+    if (m.mtpOn && m.id==='qwen') for(let d=1;d<=5;d++)
+      spawnPacket(m, [{x:402,y:srcY+d*4},{x:330,y:218+d*2}], col, 2, stepMs*0.55, d*1.5);
+  }
+}
+
+function stepDone(s){
+  const m=s.m, st=m.steps[s.i];
+  dimNode(m.sv.attn); dimNode(m.sv.ffn); if (m.sv.router) dimNode(m.sv.router, m.color);
+  spawnPacket(m, [{x:240,y:238},{x:240,y:298}], '#4cc2ff', 3, 40, 0);   // Zustand → weiter
+  // Inkling: back-edge between the passes
+  if (m.id==='inkling' && (s.i===23 || s.i===35))
+    spawnPacket(m, [{x:236,y:296},{x:96,y:226},{x:236,y:150}], '#a6b6c6', 4.5, 140, 10);
+  s.flags={};
+}
+
+function statusText(s){
+  const m=s.m, st=m.steps[Math.min(s.i,m.stepCount-1)];
+  const p = s.rem<0.3? '① Attention' : s.rem<0.45? '② Router' : '③ weight GEMM';
+  if (m.id==='qwen') return `Step ${s.i+1}/64 · ${p} · ${m.bytesPerStepMB.toFixed(0)} MB layer slice${m.mtpOn?' · MTP: 6 drafts':''}`;
+  if (m.id==='maxwell') return `Step ${s.i+1}/45 · ${p} · 12+1/256 awake · ${m.bytesPerStepMB.toFixed(0)} MB`;
+  if (s.i>=m.stepCount) return 'token done';
+  return st.reuse
+    ? `Pass ${st.pass} · step ${s.i+1}/48 · ${p} · BACK-EDGE: same weights again (${m.bytesPerStepMB.toFixed(0)} MB)`
+    : `Pass 1 · step ${s.i+1}/48 · ${p} · ${m.bytesPerStepMB.toFixed(0)} MB`;
+}
+
+function updateKV(m){
+  const frac=depthVal/131072;
+  m.sv.kvFill.setAttribute('height', Math.max(0,(268*frac)).toFixed(1));
+  m.sv.kvFill.setAttribute('y', (353-268*frac).toFixed(1));
+  m.sv.kvFill.setAttribute('fill', frac>0? '#8a6d1a' : '#1c2330');
+  m.sv.kvTxt.textContent = depthVal===0? '0 tok' : fmtD(depthVal);
+  m.sv.attnSub.textContent = depthVal===0 ? 'reads nothing (depth 0) · writes 1 token K/V' : `reads K+V of ${fmtD(depthVal)} tokens · writes 1 K/V`;
+}
+
+function consume(s, ms){
+  const m=s.m; let remaining=ms*speed;
+  while (remaining>0 && s.i<m.stepCount){
+    const ph=getPh(s), need=ph.w+ph.kv+ph.over;
+    subPhase(s);
+    $('stat-'+m.id).textContent=statusText(s);
+    const take=Math.min(need*(1-s.rem), remaining);
+    s.acc.w+=ph.w*(take/need); s.acc.kv+=ph.kv*(take/need); s.acc.over+=ph.over*(take/need);
+    s.bytes+=m.bytesPerStepMB*(take/need);
+    s.rem+=take/need; remaining-=take;
+    if (s.rem>=1){
+      stepDone(s);
+      s.i++; s.rem=0;
+      if (s.i<m.stepCount){ s.flags={}; litStore(m,s); }
+    }
+  }
+  advancePackets(m, ms*speed);
+  m.sv.byteTxt.textContent = s.bytes>=1024? (s.bytes/1024).toFixed(2)+' GiB' : s.bytes.toFixed(0)+' MB';
+  if (s.i>=m.stepCount && s.cooling===0){
+    s.cooling=150; s.tokens++;
+    spawnPacket(m, [{x:240,y:302},{x:240,y:346}], '#59d97b', 4, 60, 0);
+    const word=WORDS[s.wordIdx++%WORDS.length];
+    const cur=(m.sv.tokTxt.textContent==='…'?'':m.sv.tokTxt.textContent);
+    m.sv.tokTxt.textContent=(cur+word).length>34? word.trim()+' …' : cur+word;
+    $('tk-'+m.id).textContent=s.tokens;
+    const msTok=s.acc.w+s.acc.kv+s.acc.over;
+    $('ms-'+m.id).textContent=fmtMs(msTok); $('ts-'+m.id).textContent=fmtMs(1000/msTok);
+    if (playing) renderStatics();
+  }
+  if (s.cooling>0){ s.cooling-=ms*speed;
+    if (s.cooling<=0){ s.i=0; s.rem=0; s.acc={w:0,kv:0,over:0}; s.cooling=0; s.bytes=0; s.flags={};
+      m.sv.segs.forEach(sg=>sg.setAttribute('fill', m.id==='qwen'? '#3a2228' : m.id==='maxwell'? '#17301f' : '#31264a'));
+      m.sv.segs.forEach(sg=>sg.setAttribute('stroke','none'));
+      $('stat-'+m.id).textContent='ready for the next token …'; resetPhases(m); }
+  }
+  drawPhases(m, s.acc);
+}
+
+// stat chips + phase bar below each lane
+MODELS.forEach((m,ix)=>{
+  lanesEl.children[ix].insertAdjacentHTML('beforeend',
+   `<div class="phases" id="ph-${m.id}"><div style="background:var(--w);width:0%"></div><div style="background:var(--kv);width:0%"></div><div style="background:var(--over);width:0%"></div></div>
+    <div class="legend"><span><span class="lg" style="background:var(--w)"></span>weights</span><span><span class="lg" style="background:var(--kv)"></span>KV+Att</span><span><span class="lg" style="background:var(--over)"></span>routing/overhead</span></div>
+    <div class="stats"><span class="stat">ms/token <b id="ms-${m.id}">–</b></span>
+    <span class="stat"><b id="ts-${m.id}">–</b> t/s</span>
+    <span class="stat">tokens <b id="tk-${m.id}">0</b></span></div>`);
+});
+
+function drawPhases(m, acc){
+  const tot=acc.w+acc.kv+acc.over||1e-9, segs=$('ph-'+m.id).children;
+  segs[0].style.width=(100*acc.w/tot)+'%'; segs[1].style.width=(100*acc.kv/tot)+'%'; segs[2].style.width=(100*acc.over/tot)+'%';
+}
+function resetPhases(m){ for(const s of $('ph-'+m.id).children) s.style.width='0%'; }
+
+function stepOf(s){
+  const m=s.m;
+  if (s.cooling>0){ s.cooling=0; s.i=0; s.rem=0; s.acc={w:0,kv:0,over:0}; s.bytes=0; s.flags={};
+    m.sv.segs.forEach(sg=>sg.setAttribute('fill', m.id==='qwen'? '#3a2228' : m.id==='maxwell'? '#17301f' : '#31264a'));
+    m.sv.segs.forEach(sg=>sg.setAttribute('stroke','none'));
+    resetPhases(m); }
+  if (s.i>=m.stepCount) return;
+  const ph=getPh(s);
+  subPhase(s); s.rem=0.31; subPhase(s); s.rem=0.46; subPhase(s); s.rem=1;  // alle Sub-Phasen durchziehen
+  $('stat-'+m.id).textContent=statusText(s);
+  stepDone(s);
+  s.acc.w+=ph.w; s.acc.kv+=ph.kv; s.acc.over+=ph.over; s.bytes+=m.bytesPerStepMB;
+  s.i++; s.rem=0; s.flags={};
+  if (s.i>=m.stepCount){
+    const msTok=s.acc.w+s.acc.kv+s.acc.over;
+    $('ms-'+m.id).textContent=fmtMs(msTok); $('ts-'+m.id).textContent=fmtMs(1000/msTok);
+    $('tk-'+m.id).textContent=++s.tokens;
+    spawnPacket(m, [{x:240,y:302},{x:240,y:346}], '#59d97b', 4, 60, 0);
+    const word=WORDS[s.wordIdx++%WORDS.length];
+    const cur=(m.sv.tokTxt.textContent==='…'?'':m.sv.tokTxt.textContent);
+    m.sv.tokTxt.textContent=(cur+word).length>34? word.trim()+' …' : cur+word;
+    s.cooling=150;
+  }
+  for (let d=0; d<8; d++) advancePackets(m, 20);   // Einzelschritt: Pakete kurz nachziehen
+  drawPhases(m, s.acc);
+}
+
+function tick(t){
+  const dt=lastT? (t-lastT):0; lastT=t;
+  if (playing) for (const s of S) consume(s, dt);
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+setInterval(()=>{ if (document.visibilityState==='hidden' && playing) tick(performance.now()); }, 40);
+
+// ==================== UI ====================
+const btnPlay=$('btnPlay'), btnMtp=$('btnMtp'), depthEl=$('depth'), speedEl=$('speed');
+btnPlay.onclick=()=>{ playing=!playing; btnPlay.textContent=playing?'⏸ Pause':'▶ Start'; btnPlay.classList.toggle('on',playing); };
+$('btnStep').onclick=()=>{ if(playing)return; for(const s of S) stepOf(s); };
+$('btnToken').onclick=()=>{ if(playing)return; for(const s of S){ while(s.i<s.m.stepCount) stepOf(s); } };
+$('btnReset').onclick=()=>{ playing=false; btnPlay.textContent='▶ Start'; btnPlay.classList.remove('on');
+  for(const s of S){ s.i=0;s.rem=0;s.acc={w:0,kv:0,over:0};s.tokens=0;s.wordIdx=0;s.cooling=0;s.bytes=0;
+    s.m.sv.packets.forEach(p=>p.el.remove()); s.m.sv.packets=[];
+    s.m.sv.segs.forEach(sg=>sg.setAttribute('fill', s.m.id==='qwen'? '#3a2228' : s.m.id==='maxwell'? '#17301f' : '#31264a'));
+    s.m.sv.segs.forEach(sg=>sg.setAttribute('stroke','none'));
+    s.m.sv.tokTxt.textContent='…'; dimNode(s.m.sv.attn); dimNode(s.m.sv.ffn); if(s.m.sv.router) dimNode(s.m.sv.router, s.m.color);
+    $('ms-'+s.m.id).textContent='–'; $('ts-'+s.m.id).textContent='–'; $('tk-'+s.m.id).textContent='0';
+    $('stat-'+s.m.id).textContent='ready …'; resetPhases(s.m); }
+  renderStatics(); };
+speedEl.onchange=()=>speed=parseFloat(speedEl.value);
+depthEl.oninput=()=>{ depthVal=DEPTHS[+depthEl.value]; $('depthVal').textContent=fmtD(depthVal);
+  MODELS.forEach(m=>updateKV(m)); renderStatics();
+  for (const s of S){ if (s.cooling>0){ s.cooling=0; s.i=0; s.rem=0; s.acc={w:0,kv:0,over:0}; s.bytes=0;
+    s.m.sv.packets.forEach(p=>p.el.remove()); s.m.sv.packets=[];
+    s.flags={}; resetPhases(s.m); } } };
+btnMtp.onclick=()=>{ const m=MODELS[0]; m.mtpOn=!m.mtpOn;
+  btnMtp.textContent=`MTP n6 (Qwen): ${m.mtpOn?'an ×2.2':'aus'}`; btnMtp.classList.toggle('on',m.mtpOn);
+  renderStatics(); };
+
+function renderStatics(){
+  const lb=$('lossbars');
+  lb.innerHTML = MODELS.map(m=>{
+    const ph=m.phasesAt(depthVal), msTok=ph.total;
+    const seg=(v,c,name)=>`<div style="width:${(100*v/msTok).toFixed(1)}%;background:${c};display:inline-block;color:#081018;font-size:11px;text-align:center;overflow:hidden;white-space:nowrap">${(100*v/msTok>8)? name+' '+fmtMs(v)+'ms':''}</div>`;
+    const worst=[['weight bandwidth',ph.w],['KV+attention',ph.kv],['routing/dequant/overhead',ph.over]].sort((a,b)=>b[1]-a[1])[0];
+    return `<div class="card" style="padding:10px 14px">
+      <b style="color:${m.color}">${m.name}</b> · ${fmtMs(msTok)} ms/token (${fmtMs(1000/msTok)} t/s) · bottleneck: <b>${worst[0]}</b>
+      <div class="phases" style="height:22px;margin-top:6px">${seg(ph.w,'var(--w)','weights')}${seg(ph.kv,'var(--kv)','KV+Att')}${seg(ph.over,'var(--comp)','routing/overhead')}</div>
+    </div>`;
+  }).join('');
+
+  $('tokcards').innerHTML = MODELS.map(m=>{
+    const msTok=m.msTokAt(depthVal), ph=m.phasesAt(depthVal);
+    return `<div class="lane"><h3 style="color:${m.color}">${m.name}</h3>
+      <div class="arch">${m.mtpOn&&m.id==='qwen'?'MTP n6 active (÷2.2 on all phases)':''}</div>
+      <div class="stats"><span class="stat">1 token = <b>${fmtMs(msTok)} ms</b></span>
+      <span class="stat"><b>${fmtMs(1000/msTok)} t/s</b></span></div>
+      <div class="legend"><span><span class="lg" style="background:var(--w)"></span>${fmtMs(ph.w)} ms weights (${(100*ph.w/ph.total).toFixed(0)}%)</span>
+      <span><span class="lg" style="background:var(--kv)"></span>${fmtMs(ph.kv)} ms KV+att (${(100*ph.kv/ph.total).toFixed(0)}%)</span>
+      <span><span class="lg" style="background:var(--over)"></span>${fmtMs(ph.over)} ms overhead (${(100*ph.over/ph.total).toFixed(0)}%)</span></div>
+      <div class="note" style="margin-top:6px">${m.note||''}</div></div>`;
+  }).join('');
+
+  const rows = DEPTHS.map(d=>{
+    const cur=d===depthVal;
+    const cell=v=>v.toFixed(1);
+    const q=interp(MODELS[0].tg,d), qm=MODELS[0].mtpOn? q*MTP_FACTOR : q;
+    return `<tr${cur?' style="outline:1px solid var(--accent)"':''}><td${cur?' style="color:var(--accent)"':''}>${fmtD(d)}</td>
+      <td>${cell(q)}</td><td>${MODELS[0].mtpOn?'<b>'+cell(qm)+'</b>':cell(qm)}</td>
+      <td>${cell(interp(MODELS[1].tg,d))}</td><td>${cell(interp(MODELS[2].tg,d))}</td>
+      <td>${interp(MODELS[0].pp,d).toFixed(0)}</td><td>${interp(MODELS[1].pp,d).toFixed(0)}</td><td>${interp(MODELS[2].pp,d).toFixed(0)}</td></tr>`;
+  }).join('');
+  $('tablecard').innerHTML=`<table><tr><th>depth</th><th>tg Qwen</th><th>tg Qwen+MTP</th><th>tg Maxwell</th><th>tg Inkling</th><th>pp Qwen</th><th>pp Maxwell</th><th>pp Inkling</th></tr>${rows}</table>`;
+}
+
+$('method').innerHTML=`
+<b>Measured</b>: Qwen3.8-27B UD-Q4_K_XL layer/ub256/q8_0-KV (§4a; 120k derived from §4b via MTP ÷2.2) ·
+Maxwell AD-Q5_K-Q4_K tensor+ALLREDUCE, ub512 · Inkling UD-Q4_K_XL mainline+fix #32704, layer/ub256. All on 2× RTX 5060 Ti, fa on, t12.<br>
+<b>Packet visualization</b>: size ∝ bytes read per step (Qwen ~262 MB/layer; Maxwell ~53 MB active experts/application; Inkling ~66 MB/application),
+source = VRAM weight block or KV cache. Bytes/token: Qwen 16.34 GiB (everything), Maxwell ~2.4 GB, Inkling ~3.1 GB (active share; the loop reads the same
+physical blocks 3× — VRAM saved, yes, but read and compute time still ×3).<br>
+<b>Phase model</b>: overhead := ms/token(0) − weights (BW 378 GB/s); KV share := remainder of the measured curve. Curves = measured, split = calibrated estimate.`;
+
+// ==================== Init ====================
+MODELS.forEach(m=>{ updateKV(m); });
+renderStatics();
+</script>
+</body>
+</html>
